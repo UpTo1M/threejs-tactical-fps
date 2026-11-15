@@ -56,6 +56,44 @@ export function createGame(opts) {
   const projectiles = [];
   const muzzleWorld = new THREE.Vector3();
 
+  // --- planted spike device: a visible, blinking charge on the ground ---
+  // The spike used to be state only — defenders had nothing to look at.
+  // Now it is a dark charge with a hot orange core, an aerial and a red
+  // beacon light, plus a pulsing ring on the asphalt, so a planted site
+  // reads instantly from across the yard. Visual only: no collider, never
+  // a raycast target.
+  const spikeGroup = new THREE.Group();
+  {
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.52, 0.26, 0.36),
+      new THREE.MeshStandardMaterial({ color: 0x23262c, roughness: 0.45, metalness: 0.65, emissive: 0xff5a1e, emissiveIntensity: 0.55 }),
+    );
+    body.position.y = 0.13;
+    body.castShadow = true;
+    const core = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.1, 0.2),
+      new THREE.MeshBasicMaterial({ color: 0xff7a2e }),
+    );
+    core.position.y = 0.29;
+    const aerial = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.015, 0.015, 0.85, 6),
+      new THREE.MeshStandardMaterial({ color: 0x111214, roughness: 0.6, metalness: 0.5 }),
+    );
+    aerial.position.set(0.2, 0.62, 0);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.05, 1.3, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff5a1e, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.03;
+    spikeGroup.add(body, core, aerial, ring);
+    spikeGroup.visible = false;
+    scene.add(spikeGroup);
+  }
+  const spikeRing = spikeGroup.children[3];
+  const spikeLight = new THREE.PointLight(0xff5a1e, 0, 14, 1.7);
+  scene.add(spikeLight);
+
   function emit(type, data) {
     events.push({ type, ...(data || {}) });
   }
@@ -442,6 +480,21 @@ export function createGame(opts) {
     if (player) {
       weaponStep(player.weapon, dt);
       if (player.sidearm) weaponStep(player.sidearm, dt);
+    }
+    // planted spike device: visible charge + blinking beacon while the
+    // round is live; hidden once the round is decided (the charge is gone
+    // after detonation, and a defuse hands the round to the Jackals).
+    if (state.spike.state === 'planted' && state.phase === 'live') {
+      spikeGroup.visible = true;
+      spikeGroup.position.set(state.spike.pos.x, 0, state.spike.pos.z);
+      const blink = Math.sin(state.time * 6) > 0;
+      spikeLight.position.set(state.spike.pos.x, 1.2, state.spike.pos.z);
+      spikeLight.intensity = blink ? 22 : 8;
+      spikeRing.scale.setScalar(1 + 0.15 * Math.sin(state.time * 3));
+      spikeRing.material.opacity = blink ? 0.65 : 0.45;
+    } else {
+      spikeGroup.visible = false;
+      spikeLight.intensity = 0;
     }
   }
 

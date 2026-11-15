@@ -43,7 +43,7 @@ function groundTexture() {
   canvas.width = 1024;
   canvas.height = 1024;
   const g = canvas.getContext('2d');
-  g.fillStyle = '#262a31';
+  g.fillStyle = '#2d3138';
   g.fillRect(0, 0, 1024, 1024);
   // asphalt speckle
   for (let i = 0; i < 9000; i += 1) {
@@ -87,9 +87,92 @@ function groundTexture() {
   }
   hazard(-13.5, -9.5, 40);
   hazard(13.5, -9.5, 40);
+  // big site letters painted on the asphalt at each site entrance, so the
+  // objective reads from across the yard
+  g.font = '800 130px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(232,228,216,0.32)';
+  g.fillText('A', px(-13.5), pz(-3.0));
+  g.fillText('B', px(13.5), pz(-3.0));
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  return texture;
+}
+
+// Corrugated container skin: vertical ribs, a pale stencil band and grime
+// at the base, so the big boxes read as steel instead of flat colour.
+function containerTexture(base) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const g = canvas.getContext('2d');
+  g.fillStyle = base;
+  g.fillRect(0, 0, 256, 256);
+  for (let x = 0; x < 256; x += 32) {
+    g.fillStyle = 'rgba(0,0,0,0.22)';
+    g.fillRect(x, 0, 7, 256);
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    g.fillRect(x + 7, 0, 5, 256);
+  }
+  g.fillStyle = 'rgba(255,255,255,0.07)';
+  g.fillRect(0, 0, 256, 12);
+  g.fillStyle = 'rgba(232,228,216,0.15)';
+  g.fillRect(0, 96, 256, 26);
+  g.fillStyle = 'rgba(0,0,0,0.28)';
+  g.fillRect(0, 228, 256, 28);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+// Dusk sky, painted once on a canvas and wrapped on a dome: indigo zenith,
+// mauve band, a warm orange horizon and the low sun glowing where the key
+// light comes from, plus faint stars overhead. Equirect layout: canvas top
+// is the zenith, canvas middle is the horizon.
+function skyTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 512;
+  const g = canvas.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0.0, '#0e1226');
+  grad.addColorStop(0.25, '#1c2748');
+  grad.addColorStop(0.4, '#33456e');
+  grad.addColorStop(0.47, '#6a5470');
+  grad.addColorStop(0.5, '#e89a58');
+  grad.addColorStop(0.55, '#c47a48');
+  grad.addColorStop(0.65, '#4a3428');
+  grad.addColorStop(1.0, '#241c16');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 1024, 512);
+  // stars, only high up where the sky is dark
+  for (let i = 0; i < 160; i += 1) {
+    const y = Math.random() * 170;
+    const a = 0.25 + Math.random() * 0.6 * (1 - y / 200);
+    g.fillStyle = `rgba(255,255,255,${a.toFixed(2)})`;
+    const s = Math.random() < 0.12 ? 2 : 1;
+    g.fillRect(Math.random() * 1024, y, s, s);
+  }
+  // low sun: the key light sits south-east, low over the yard, so the glow
+  // goes at its azimuth (canvas x ~417) just above the horizon (y ~196)
+  const sunX = 417;
+  const sunY = 196;
+  const glow = g.createRadialGradient(sunX, sunY, 0, sunX, sunY, 190);
+  glow.addColorStop(0, 'rgba(255,214,150,0.95)');
+  glow.addColorStop(0.18, 'rgba(255,176,110,0.55)');
+  glow.addColorStop(0.5, 'rgba(255,140,80,0.18)');
+  glow.addColorStop(1, 'rgba(255,140,80,0)');
+  g.fillStyle = glow;
+  g.fillRect(0, 0, 1024, 512);
+  g.fillStyle = 'rgba(255,226,170,0.95)';
+  g.beginPath();
+  g.arc(sunX, sunY, 15, 0, Math.PI * 2);
+  g.fill();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
@@ -103,12 +186,22 @@ export function createWorld(scene) {
     ground: new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 0.95, metalness: 0.02 }),
     wall: new THREE.MeshStandardMaterial({ color: PALETTE.surface, roughness: 0.9, metalness: 0.05 }),
     dark: new THREE.MeshStandardMaterial({ color: PALETTE.hairline, roughness: 0.85, metalness: 0.1 }),
-    rust: new THREE.MeshStandardMaterial({ color: 0x8a4a28, roughness: 0.8, metalness: 0.15 }),
-    teal: new THREE.MeshStandardMaterial({ color: 0x2e6f66, roughness: 0.8, metalness: 0.15 }),
-    amber: new THREE.MeshStandardMaterial({ color: 0x9a7a2e, roughness: 0.8, metalness: 0.15 }),
+    rust: new THREE.MeshStandardMaterial({ map: containerTexture('#8a4a28'), roughness: 0.8, metalness: 0.15 }),
+    teal: new THREE.MeshStandardMaterial({ map: containerTexture('#2e6f66'), roughness: 0.8, metalness: 0.15 }),
+    amber: new THREE.MeshStandardMaterial({ map: containerTexture('#9a7a2e'), roughness: 0.8, metalness: 0.15 }),
     silo: new THREE.MeshStandardMaterial({ color: 0x6d7278, roughness: 0.55, metalness: 0.45 }),
     accent: new THREE.MeshStandardMaterial({ color: PALETTE.accent, roughness: 0.6, metalness: 0.1, emissive: 0x531f08, emissiveIntensity: 0.7 }),
   };
+
+  // Dusk sky dome: a gradient sky with the low sun, drawn once. It is
+  // unfogged and unlit (MeshBasicMaterial), so it never goes muddy with
+  // distance; the scene fog colour matches the horizon haze.
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(120, 32, 16),
+    new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false }),
+  );
+  sky.renderOrder = -1;
+  scene.add(sky);
 
   function box(w, h, d, x, y, z, material, collide = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat[material]);
@@ -184,6 +277,17 @@ export function createWorld(scene) {
   // Site B "Silo": twin silos + pipe rack + crates.
   cylinder(2.1, 2.1, 7.5, 15.5, 3.75, -12.5, 'silo');
   cylinder(2.1, 2.1, 6.2, 11.2, 3.1, -13.5, 'silo');
+  // dark bands around the silos, so the big grey drums are not flat
+  function ring(x, y, z, r) {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(r + 0.03, 0.07, 8, 28), mat.dark);
+    m.rotation.x = Math.PI / 2;
+    m.position.set(x, y, z);
+    group.add(m);
+  }
+  ring(15.5, 2.6, -12.5, 2.1);
+  ring(15.5, 5.2, -12.5, 2.1);
+  ring(11.2, 2.4, -13.5, 2.1);
+  ring(11.2, 4.8, -13.5, 2.1);
   box(6.5, 0.7, 0.7, 13.4, 5.6, -12.8, 'dark');
   box(2.2, 1.1, 2.2, 11.5, 0.55, -7, 'dark');
   box(2.2, 1.1, 2.2, 15.5, 0.55, -7, 'dark');
@@ -221,11 +325,13 @@ export function createWorld(scene) {
   }
   scene.add(skyline);
 
-  // Lighting: low dusk sun, cool sky fill, warm floods at the sites.
-  const hemi = new THREE.HemisphereLight(0x8fa3c0, 0x2a2118, 1.15);
+  // Lighting: low dusk sun from the south-east, cool sky fill, warm floods
+  // at the sites. The sun sits low (long shadows, warm faces) and the sky
+  // dome's glow sits at the same azimuth.
+  const hemi = new THREE.HemisphereLight(0x8fa3c0, 0x2a2118, 1.4);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffc98a, 2.7);
-  sun.position.set(24, 26, 18);
+  const sun = new THREE.DirectionalLight(0xffc98a, 3.0);
+  sun.position.set(30, 14, 20);
   sun.target.position.set(0, 0, -4);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);

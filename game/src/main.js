@@ -47,8 +47,9 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x35405a);
-scene.fog = new THREE.Fog(new THREE.Color(0x35405a), 30, 80);
+// Flat fallback behind the sky dome (world.js), tinted like the horizon haze.
+scene.background = new THREE.Color(0x46536e);
+scene.fog = new THREE.Fog(new THREE.Color(0x46536e), 35, 95);
 const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.05, 160);
 scene.add(camera);
 
@@ -169,19 +170,27 @@ botsApi.bots = bots.bots;
 game.setBotsApi(botsApi);
 
 // --- viewmodel: a simple gun in the player's hands, attached to the camera ---
+// Lighter metals than the old near-black slab, a magazine, a front sight and
+// a thin gold stripe, so it reads as a rifle in the dusk light.
 const viewmodel = new THREE.Group();
 {
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1d1f24, roughness: 0.6, metalness: 0.4 });
-  const accent = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.5, metalness: 0.5 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x33373f, roughness: 0.55, metalness: 0.45 });
+  const accent = new THREE.MeshStandardMaterial({ color: 0x6a7078, roughness: 0.45, metalness: 0.55 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xf0a830, roughness: 0.5, metalness: 0.3 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.55), dark);
   const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.34), accent);
   barrel.position.set(0, 0.03, -0.4);
   const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), dark);
   grip.position.set(0, -0.14, 0.16);
   grip.rotation.x = 0.35;
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.12), dark);
+  mag.position.set(0, -0.13, -0.08);
+  mag.rotation.x = 0.25;
   const sight = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.1), accent);
   sight.position.set(0, 0.09, -0.05);
-  viewmodel.add(body, barrel, grip, sight);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.02, 0.3), gold);
+  stripe.position.set(0, 0.045, -0.18);
+  viewmodel.add(body, barrel, grip, mag, sight, stripe);
   viewmodel.position.set(0.3, -0.27, -0.55);
   camera.add(viewmodel);
 }

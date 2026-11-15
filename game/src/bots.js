@@ -106,7 +106,8 @@ function makeBotMesh(team, name) {
   gun.position.set(0.12, 1.22, 0.42);
   group.add(legL, legR, torso, armL, armR, head, helmet, gun);
   const tag = makeNameSprite(name, team === 'V' ? '#7fe0d2' : '#ffb37a');
-  tag.position.y = 2.05;
+  tag.position.y = 2.12;
+  tag.scale.set(1.35, 0.34, 1);
   group.add(tag);
   group.traverse((o) => {
     o.castShadow = true;

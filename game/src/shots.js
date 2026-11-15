@@ -95,12 +95,16 @@ export function stageShot(name, ctx) {
     S.spike.state = 'planted';
     S.spike.site = 'A';
     // spike + defuser on the clear east edge of the site, past the crate stack
-    S.spike.pos.set(-9.5, 0, -7.5);
+    // the charge sits on open asphalt so its ring and beacon read, with the
+    // defuser a step behind it rather than standing on top of it
+    S.spike.pos.set(-9.5, 0, -6.2);
     S.spike.timer = 27.3;
     giveLoadout(game, player, 'ar77', 3550, 0, 1);
     // west-lane vantage: clear sightline down the lane to the defusing Jackal
     player.mover.teleport(-16, -2, 0);
-    placeBot(jBots[0], -9.5, -7.5, Math.PI / 2);
+    // the defuser kneels just past the charge, so the spike device itself
+    // stays visible beside him instead of hiding behind his body
+    placeBot(jBots[0], -8.9, -8.1, Math.PI / 2);
     jBots[0].state = 'defuse';
     jBots[0].defuseProgress = 1.6;
     placeBot(jBots[1], -10.5, -12.5, Math.PI / 2);
@@ -112,7 +116,8 @@ export function stageShot(name, ctx) {
     placeBot(vBots[2], 0, 8, 0);
     placeBot(vBots[3], 6, 8, 0);
     settle(10);
-    aimAt(V3(-9.5, 1.3, -7.5));
+    // aim low on the defuser so the planted spike device sits in frame too
+    aimAt(V3(-9.5, 0.9, -7.5));
     hud.setHint('');
   } else if (name === 'end') {
     // Round won: banner over the yard, score 3–2.
@@ -125,11 +130,19 @@ export function stageShot(name, ctx) {
     S.roundReason = 'Spike detonated';
     giveLoadout(game, player, 'ar77', 6100, 1, 0);
     player.mover.teleport(2, 11, 0);
-    placeBot(vBots[0], -2, 9, 0);
+    // Rook stands close to the camera axis so his nameplate stays in frame;
+    // Wick holds the east lane so his tag no longer stacks on Vex's.
+    placeBot(vBots[0], -1, 8, 0);
     placeBot(vBots[1], 5, 8, 0);
     placeBot(vBots[2], -6, 6, 0);
     placeBot(vBots[3], 8, 10, 0);
     placeBot(jBots[0], 0, -4, Math.PI);
+    // the rest of the Jackals hold spread positions: none of them may sit
+    // on the camera's sightline behind Vex, or their nameplates stack.
+    placeBot(jBots[1], -7, -10, Math.PI);
+    placeBot(jBots[2], -11, -6, Math.PI);
+    placeBot(jBots[3], 10, -11, Math.PI);
+    placeBot(jBots[4], 7, -9, Math.PI);
     settle(10);
     aimAt(V3(-2, 1.4, -6));
     hud.showBanner('ROUND WON', 'Spike detonated — Vanguard takes round 5', true);

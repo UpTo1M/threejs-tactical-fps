@@ -35,9 +35,29 @@ export function createEffects(scene, camera) {
   }
   let tNext = 0;
 
-  // --- muzzle flash: plane + light on the camera ---
-  const flashMat = new THREE.MeshBasicMaterial({ color: 0xffc46b, transparent: true, opacity: 0, depthWrite: false });
-  const flash = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), flashMat);
+  // --- muzzle flash: textured plane + light on the camera ---
+  // A radial star texture, so the flash reads as a burst of light instead
+  // of the flat square the plain plane used to be.
+  const flashCanvas = document.createElement('canvas');
+  flashCanvas.width = 128;
+  flashCanvas.height = 128;
+  {
+    const g = flashCanvas.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,240,200,1)');
+    grad.addColorStop(0.25, 'rgba(255,196,107,0.9)');
+    grad.addColorStop(0.6, 'rgba(255,140,60,0.35)');
+    grad.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    g.fillStyle = 'rgba(255,220,160,0.85)';
+    g.fillRect(60, 6, 8, 116);
+    g.fillRect(6, 60, 116, 8);
+  }
+  const flashTex = new THREE.CanvasTexture(flashCanvas);
+  flashTex.colorSpace = THREE.SRGBColorSpace;
+  const flashMat = new THREE.MeshBasicMaterial({ map: flashTex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+  const flash = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), flashMat);
   flash.position.set(0.3, -0.2, -0.85);
   camera.add(flash);
   const flashLight = new THREE.PointLight(0xffb85e, 0, 9, 1.8);
