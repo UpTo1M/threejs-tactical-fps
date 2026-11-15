@@ -26,7 +26,7 @@ The dossier includes the game source, the vendored Three.js runtime, the four de
 
 ## Design
 
-Kestrel Yard is a three-lane industrial site with two objectives, stacked containers, a crane, twin silos, site cover, connectors, and a minimap. The simulation uses fixed steps, hitscan weapons with recoil/spread and head hitboxes, team bots navigating a waypoint graph, hearing and line of sight, smoke occlusion, frag grenades, buy economy, round loss bonuses, spike plant/defuse, and match progression.
+Kestrel Yard is a three-lane industrial site at dusk: a gradient sky dome with a low sun and stars, two objectives, corrugated containers, a crane, banded twin silos, painted site letters, site cover, connectors, and a minimap. The planted spike is a visible charge with a blinking red beacon and a pulsing ground ring. The simulation uses fixed steps, hitscan weapons with recoil/spread and head hitboxes, team bots navigating a waypoint graph, hearing and line of sight, smoke occlusion, frag grenades, buy economy, round loss bonuses, spike plant/defuse, and match progression.
 
 ## Verification
 
