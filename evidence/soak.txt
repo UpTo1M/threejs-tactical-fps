@@ -1,0 +1,26 @@
+PASS  hook present
+PASS  starts in menu
+PASS  buy phase after play
+PASS  buy timer ~12s
+PASS  cannot afford AR-77 at $800
+PASS  can buy AR-77 at $3000
+PASS  money deducted
+PASS  primary is AR-77
+PASS  frag buys with last $300
+PASS  buying a second frag is blocked
+PASS  one frag carried
+PASS  live phase
+PASS  bots leave spawn — moved 2.2m
+PASS  player walks forward (W) — z=8.93
+PASS  headshot kill lands — {"alive":false,"shots":2,"kills":1,"money":300}
+PASS  kill pays $300 — $300
+PASS  frag projectile resolved — {"phase":"live","vAlive":3,"jAlive":4,"playerAlive":false,"jHp":[0,100,100,80,59]}
+PASS  spike plants
+PASS  round won by elimination
+PASS  score 1-0
+PASS  win bonus paid
+PASS  round 2 buy phase
+PASS  match ends at 5 wins
+PASS  Vanguard wins match
+PASS  smoke blocks sight
+PASS  no page exceptions
