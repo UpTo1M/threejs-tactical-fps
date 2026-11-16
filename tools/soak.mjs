@@ -67,7 +67,14 @@ await sendT('Runtime.enable');
 // Block rAF before the page loads: the live loop would otherwise advance the
 // game in wall-clock time alongside the manual steps below, making the test
 // nondeterministic. The sim is driven only by __sable.step() calls.
-await sendT('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
+await sendT('Page.addScriptToEvaluateOnNewDocument', { source: `
+  window.requestAnimationFrame = () => 0;
+  let randomState = 7491;
+  Math.random = () => {
+    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+    return randomState / 4294967296;
+  };
+` });
 await sendT('Page.navigate', { url });
 await sleep(5000);
 
@@ -154,9 +161,20 @@ try {
     // the spike passed to a bot when the player died earlier; hand it back
     __sable.game.state.spike.state = 'carried';
     __sable.game.state.spike.carrier = 'player';
-    __sable.bots.bots.forEach(b => { b.hasSpike = false; });
+    // Combat was exercised above. Isolate the plant interaction from enemy
+    // reaction rolls so a player death cannot masquerade as a plant failure.
+    __sable.bots.bots.forEach(b => {
+      b.hasSpike = false;
+      b.target = null;
+      b.thinkIn = 100;
+      b.state = 'hold';
+      b.path = [];
+    });
     const site = __sable.game.state.spike.site === 'A' ? {x:-13.5,z:-9.5} : {x:13.5,z:-9.5};
     __sable.player.mover.teleport(site.x, site.z, 0);
+    __sable.game.tryPlant(1, true);
+    __sable.game.tryPlant(1 / 60, false);
+    if (__sable.game.state.spike.plantProgress !== 0) throw new Error('plant cancellation failed');
     __sable.input.state.keys.add('KeyE');
     for (let i=0;i<260;i++) __sable.step(1/60);
     __sable.input.state.keys.delete('KeyE');
