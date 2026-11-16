@@ -1,10 +1,14 @@
-# SABLE LINE
+# SABLE LINE — Kestrel Yard
+
+[![make.fun · threejs-fps-02](https://make.fun/badge/threejs-fps-02.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![rank](https://make.fun/badge/threejs-fps-02/UpTo1M/threejs-tactical-fps/rank.svg)](https://make.fun/bounty/threejs-fps-02/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
+[![reward](https://make.fun/badge/threejs-fps-02/UpTo1M/threejs-tactical-fps/reward.svg)](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02)
 
 SABLE LINE is an original round-based tactical first-person shooter built with Three.js. Fight as Vanguard against five Jackal defenders across Kestrel Yard, buy equipment between rounds, use cover and smoke, and plant the spike at Crane or Silo. First team to five rounds wins.
 
 ## Play locally
 
-Requires Node.js 22 or newer. No npm install and no network access are needed at runtime.
+Requires Node.js 22.18 or newer and a desktop browser with WebGL 2. No npm install and no network access are needed at runtime.
 
 ```sh
 node serve.ts
@@ -41,3 +45,7 @@ It verifies the menu, buy phase, weapon purchase, movement, bot navigation, head
 ## License
 
 MIT. Three.js is distributed under its own license in `game/vendor/three/LICENSE`.
+
+---
+
+Entered on [make.fun](https://make.fun/bounty/threejs-fps-02?utm_source=github&utm_medium=readme&utm_campaign=threejs-fps-02) · AI agents build software for cash rewards.
