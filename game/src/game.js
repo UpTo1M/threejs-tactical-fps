@@ -4,10 +4,14 @@
 import * as THREE from 'three';
 import { MAP } from './world.js';
 import {
-  WEAPONS, GRENADES, GEAR,
-  createWeaponState, weaponStep, weaponReady, weaponTakeRound,
-  weaponReload, weaponRefill, weaponSpread,
+  WEAPONS, GRENADES, GEAR, createWeaponState, weaponStep,
+  weaponReady, weaponTakeRound, weaponReload, weaponRefill,
 } from './weapons.js';
+
+const ROUND_REWARD = 3250;
+const KILL_REWARD = 300;
+const PLANT_REWARD = 300;
+const CATALOGUE = { ...WEAPONS, ...GRENADES, ...GEAR };
 
 export function createGame(opts) {
   const { scene, colliders, shootables, effects, audio } = opts;
@@ -102,333 +106,362 @@ export function createGame(opts) {
     return site === 'A' ? MAP.siteA : MAP.siteB;
   }
 
-  function currentWeapon() {
-    return player.weapon;
-  }
-
   function givePrimary(id) {
     state.primaryId = id;
     player.sidearm = createWeaponState(WEAPONS.p9);
     player.weapon = createWeaponState(WEAPONS[id]);
-    player.weapon.mag = WEAPONS[id].mag;
-    player.weapon.reserve = WEAPONS[id].reserve;
   }
 
   function resetMatch() {
-    state.phase = 'buy';
-    state.phaseTime = 0;
-    state.round = 1;
-    state.scoreV = 0;
-    state.scoreJ = 0;
-    state.lossStreak = 0;
-    state.money = 800;
-    state.kills = 0;
-    state.deaths = 0;
-    state.primaryId = null;
-    state.grenades = { frag: 0, smoke: 0 };
-    state.hasKevlar = false;
-    state.hasKit = false;
-    state.matchWinner = null;
-    state.roundWinner = null;
-    state.playerHp = 100;
-    state.playerArmor = 0;
+    Object.assign(state, {
+      round: 1,
+      scoreV: 0,
+      scoreJ: 0,
+      lossStreak: 0,
+      money: 800,
+      kills: 0,
+      deaths: 0,
+      primaryId: null,
+      hasKevlar: false,
+      hasKit: false,
+      matchWinner: null,
+      grenades: { frag: 0, smoke: 0 },
+    });
+    events.length = 0;
     player.sidearm = createWeaponState(WEAPONS.p9);
     player.weapon = player.sidearm;
     startRound();
   }
 
   function startRound() {
-    state.phase = 'buy';
-    state.phaseTime = MAP.buyTime;
-    state.playerAlive = true;
-    state.playerHp = 100;
-    state.playerArmor = state.hasKevlar ? 100 : 0;
-    state.spike.state = 'carried';
-    state.spike.carrier = 'player';
-    state.spike.site = Math.random() < 0.5 ? 'A' : 'B';
-    state.spike.timer = 0;
-    state.spike.plantProgress = 0;
-    state.spike.defuseProgress = 0;
-    state.spike.defuser = null;
+    Object.assign(state, {
+      phase: 'buy',
+      phaseTime: MAP.buyTime,
+      playerAlive: true,
+      playerHp: 100,
+      playerArmor: state.hasKevlar ? 100 : 0,
+      roundWinner: null,
+      roundReason: '',
+    });
+    Object.assign(state.spike, {
+      state: 'carried',
+      carrier: 'player',
+      site: Math.random() < 0.5 ? 'A' : 'B',
+      timer: 0,
+      plantProgress: 0,
+      defuseProgress: 0,
+      defuser: null,
+    });
     projectiles.length = 0;
-    // loadout persists; ammo refills every round
-    if (player) {
-      weaponRefill(player.weapon);
-      if (player.sidearm) weaponRefill(player.sidearm);
+    spikeGroup.visible = false;
+    spikeLight.intensity = 0;
+    // Surviving purchases carry over; ammunition is renewed in both slots.
+    for (const slot of [player?.weapon, player?.sidearm]) {
+      if (slot) weaponRefill(slot);
     }
-    if (botsApi) botsApi.resetRound(state.round);
+    botsApi?.resetRound(state.round);
     emit('roundStart', { round: state.round, site: state.spike.site });
   }
 
   function endRound(winner, reason) {
-    if (state.phase === 'over' || state.phase === 'matchover') return;
-    state.phase = 'over';
-    state.phaseTime = 4.5;
-    state.roundWinner = winner;
-    state.roundReason = reason;
-    if (winner === 'V') {
-      state.scoreV += 1;
-      state.money += 3250;
-      state.lossStreak = 0;
-      audio.roundWin();
-    } else {
-      state.scoreJ += 1;
-      state.money += 1900 + Math.min(1500, state.lossStreak * 500);
-      state.lossStreak += 1;
-      audio.roundLose();
-    }
-    emit('roundEnd', { winner, reason, scoreV: state.scoreV, scoreJ: state.scoreJ, money: state.money });
+    if (['over', 'matchover'].includes(state.phase)) return;
+    Object.assign(state, {
+      phase: 'over',
+      phaseTime: 4.5,
+      roundWinner: winner,
+      roundReason: reason,
+    });
+    spikeGroup.visible = false;
+    spikeLight.intensity = 0;
+    const won = winner === 'V';
+    const payout = won ? ROUND_REWARD : 1900 + Math.min(state.lossStreak, 3) * 500;
+    state.money += payout;
+    state[won ? 'scoreV' : 'scoreJ'] += 1;
+    state.lossStreak = won ? 0 : state.lossStreak + 1;
+    if (won) audio.roundWin();
+    else audio.roundLose();
+    emit('roundEnd', {
+      winner,
+      reason,
+      money: state.money,
+      scoreV: state.scoreV,
+      scoreJ: state.scoreJ,
+    });
   }
 
   function nextRound() {
-    if (state.scoreV >= 5 || state.scoreJ >= 5 || state.round >= 9) {
-      state.phase = 'matchover';
-      state.matchWinner = state.scoreV > state.scoreJ ? 'V' : state.scoreJ > state.scoreV ? 'J' : 'draw';
-      emit('matchEnd', { winner: state.matchWinner, scoreV: state.scoreV, scoreJ: state.scoreJ });
+    const finished = Math.max(state.scoreV, state.scoreJ) >= 5 || state.round >= 9;
+    if (!finished) {
+      state.round += 1;
+      startRound();
       return;
     }
-    state.round += 1;
-    startRound();
+    state.phase = 'matchover';
+    const lead = state.scoreV - state.scoreJ;
+    state.matchWinner = lead > 0 ? 'V' : lead < 0 ? 'J' : 'draw';
+    emit('matchEnd', {
+      winner: state.matchWinner,
+      scoreV: state.scoreV,
+      scoreJ: state.scoreJ,
+    });
   }
 
   // --- damage ---
   function damagePlayer(amount, fromPos) {
-    if (!state.playerAlive || state.phase !== 'live') return;
-    let rest = amount;
-    if (state.playerArmor > 0) {
-      const absorbed = Math.min(state.playerArmor, rest * 0.5);
-      state.playerArmor -= absorbed;
-      rest -= absorbed;
-    }
-    state.playerHp -= rest;
+    if (state.phase !== 'live' || !state.playerAlive) return;
+    const armorDamage = Math.min(amount * 0.5, state.playerArmor);
+    state.playerArmor -= armorDamage;
+    state.playerHp = Math.max(state.playerHp - amount + armorDamage, 0);
     audio.hurt();
-    emit('playerHurt', { hp: state.playerHp, from: fromPos ? { x: fromPos.x, z: fromPos.z } : null });
-    if (state.playerHp <= 0) {
-      state.playerHp = 0;
-      state.playerAlive = false;
-      state.deaths += 1;
-      // the spike passes to the nearest living Vanguard bot
-      if (state.spike.state === 'carried' && state.spike.carrier === 'player' && botsApi) {
-        const carrier = botsApi.nearestAliveAlly(player.mover.body.position);
-        if (carrier) {
-          carrier.hasSpike = true;
-          state.spike.carrier = carrier;
-          emit('spikePassed', { name: carrier.name });
-        }
+    emit('playerHurt', {
+      hp: state.playerHp,
+      from: fromPos ? { x: fromPos.x, z: fromPos.z } : null,
+    });
+    if (state.playerHp > 0) return;
+    state.playerAlive = false;
+    state.deaths += 1;
+    const charge = state.spike;
+    if (charge.state === 'carried' && charge.carrier === 'player') {
+      const ally = botsApi?.nearestAliveAlly(player.mover.body.position);
+      if (ally) {
+        ally.hasSpike = true;
+        charge.carrier = ally;
+        emit('spikePassed', { name: ally.name });
       }
-      emit('playerDied', {});
     }
+    emit('playerDied');
   }
 
   function damageBot(bot, amount, part, attacker) {
     if (!bot.alive) return;
-    const dmg = part === 'head' ? amount * 2 : amount;
-    bot.hp -= dmg;
+    const headshot = part === 'head';
+    const byPlayer = attacker === 'player';
+    bot.hp = Math.max(bot.hp - amount * (headshot ? 2 : 1), 0);
     bot.damageFlash = 0.35;
-    // planting / defusing is interrupted by damage
-    if (bot.state === 'plant') {
+    if (['plant', 'defuse'].includes(bot.state)) {
       bot.plantProgress = 0;
-      bot.state = 'move';
-    }
-    if (bot.state === 'defuse') {
       bot.defuseProgress = 0;
       bot.state = 'move';
     }
-    if (bot.hp <= 0) {
-      bot.hp = 0;
-      botsApi.kill(bot);
-      emit('kill', { victim: bot.name, victimTeam: bot.team, byPlayer: attacker === 'player', headshot: part === 'head' });
-      if (attacker === 'player') {
-        state.kills += 1;
-        state.money += 300;
-        audio.hit(true);
-      }
-    } else if (attacker === 'player') {
-      audio.hit(false);
+    if (bot.hp > 0) {
+      if (byPlayer) audio.hit(false);
+      return;
+    }
+    botsApi.kill(bot);
+    emit('kill', { victim: bot.name, victimTeam: bot.team, byPlayer, headshot });
+    if (byPlayer) {
+      state.kills += 1;
+      state.money += KILL_REWARD;
+      audio.hit(true);
     }
   }
 
   // --- player shooting ---
+  const impactBlood = new THREE.Color(0xc22e2e);
+  const impactDust = new THREE.Color(0xd8cdb8);
+  const shotTargets = [];
+  const shotHits = [];
+
   function playerShoot(camera, spread) {
-    const w = player.weapon;
-    if (!weaponReady(w)) return false;
-    if (w.mag <= 0) {
+    const gun = player.weapon;
+    if (!state.playerAlive || state.phase !== 'live' || !weaponReady(gun)) return false;
+    if (gun.mag < 1) {
       audio.dryFire();
-      weaponReload(w);
+      weaponReload(gun);
       return false;
     }
-    if (!weaponTakeRound(w)) return false;
+    if (!weaponTakeRound(gun)) return false;
     camera.getWorldDirection(tmpDir);
     tmpDir.x += (Math.random() * 2 - 1) * spread;
     tmpDir.y += (Math.random() * 2 - 1) * spread;
     tmpDir.z += (Math.random() * 2 - 1) * spread;
     tmpDir.normalize();
     raycaster.set(camera.position, tmpDir);
-    const targets = shootables.concat(botsApi ? botsApi.hitMeshes() : []);
-    const hits = raycaster.intersectObjects(targets, false);
-    // First solid hit wins; friendly bots are never a target — the bullet
-    // flies on past them to whatever is behind.
-    let hit = null;
-    for (const candidate of hits) {
-      if (candidate.object.userData && candidate.object.userData.bot && candidate.object.userData.bot.team === 'V') continue;
-      hit = candidate;
+    shotTargets.length = 0;
+    for (const wall of shootables) shotTargets.push(wall);
+    if (botsApi) {
+      for (const mesh of botsApi.hitMeshes()) shotTargets.push(mesh);
+    }
+    shotHits.length = 0;
+    raycaster.intersectObjects(shotTargets, false, shotHits);
+    tmpTo.copy(camera.position).addScaledVector(tmpDir, 60);
+    // Raycaster orders cover and hitboxes together. Ignore allied hitboxes.
+    for (const intersection of shotHits) {
+      const { bot, part } = intersection.object.userData;
+      if (bot?.team === 'V') continue;
+      tmpTo.copy(intersection.point);
+      if (!bot) {
+        effects.burstParticles(tmpTo, 8, impactDust, 3.5);
+      } else {
+        const beyondNearRange = Math.max(camera.position.distanceTo(tmpTo) - 20, 0);
+        const falloff = Math.max(1 - beyondNearRange * 0.006, 0.65);
+        const hitScale = part === 'head' ? gun.def.headMult : 1;
+        damageBot(bot, gun.def.damage * falloff * hitScale, part, 'player');
+        effects.burstParticles(tmpTo, 10, impactBlood, 3);
+      }
       break;
     }
-    // muzzle world position (camera + small offset)
-    camera.getWorldPosition(muzzleWorld);
-    muzzleWorld.addScaledVector(tmpDir, 0.6);
+    camera.getWorldPosition(muzzleWorld).addScaledVector(tmpDir, 0.6);
     muzzleWorld.y -= 0.12;
-    let endPoint = null;
-    if (hit) {
-      endPoint = hit.point;
-      if (hit.object.userData && hit.object.userData.bot) {
-        const bot = hit.object.userData.bot;
-        const part = hit.object.userData.part;
-        const dist = camera.position.distanceTo(hit.point);
-        const falloff = dist < 20 ? 1 : Math.max(0.65, 1 - (dist - 20) * 0.006);
-        const dmg = w.def.damage * falloff * (part === 'head' ? w.def.headMult : 1);
-        damageBot(bot, dmg, part, 'player');
-        effects.burstParticles(hit.point, 10, new THREE.Color(0xc22e2e), 3);
-      } else {
-        effects.burstParticles(hit.point, 8, new THREE.Color(0xd8cdb8), 3.5);
-      }
-    } else {
-      endPoint = tmpTo.copy(camera.position).addScaledVector(tmpDir, 60);
-    }
-    effects.addTracer(muzzleWorld, endPoint);
+    effects.addTracer(muzzleWorld, tmpTo);
     effects.muzzle();
-    audio.shot(w.def.sound, 0);
-    if (botsApi) botsApi.hearShot({ x: camera.position.x, z: camera.position.z }, 'V');
+    audio.shot(gun.def.sound, 0);
+    botsApi?.hearShot(camera.position, 'V');
     return true;
   }
 
   function playerThrowGrenade(kind, camera) {
-    if (state.grenades[kind] <= 0) return false;
-    state.grenades[kind] -= 1;
+    if (!state.playerAlive || state.phase !== 'live') return false;
+    const stocked = Object.hasOwn(GRENADES, kind) && state.grenades[kind] > 0;
+    if (!stocked) return false;
     camera.getWorldDirection(tmpDir);
-    const pos = camera.position.clone();
-    pos.addScaledVector(tmpDir, 0.5);
-    pos.y -= 0.15;
+    const position = camera.position.clone().addScaledVector(tmpDir, 0.5);
+    const velocity = tmpDir.clone().multiplyScalar(17);
+    position.y -= 0.15;
+    velocity.y += 4.5;
     projectiles.push({
       kind,
-      pos,
-      vel: tmpDir.clone().multiplyScalar(17).add(new THREE.Vector3(0, 4.5, 0)),
+      pos: position,
+      vel: velocity,
       fuse: kind === 'frag' ? 1.6 : 1.1,
-      alive: true,
     });
-    audio.grenadeThrow();
+    state.grenades[kind] -= 1;
     emit('grenadeThrown', { kind, left: state.grenades[kind] });
+    audio.grenadeThrow();
     return true;
   }
 
   function explodeFrag(pos) {
     effects.explosion(pos, 5);
     audio.explosion(player.mover.body.position.distanceTo(pos));
-    // damage everyone in radius with line of sight
-    const radius = 7;
-    const victims = [];
-    if (state.playerAlive) victims.push({ kind: 'player', pos: player.mover.body.position });
-    if (botsApi) for (const b of botsApi.bots) if (b.alive) victims.push({ kind: 'bot', bot: b, pos: b.mover.body.position });
-    for (const v of victims) {
-      const d = Math.hypot(v.pos.x - pos.x, v.pos.z - pos.z) + Math.abs((v.pos.y + 1) - pos.y) * 0.4;
-      if (d > radius) continue;
-      tmpFrom.set(pos.x, pos.y + 0.3, pos.z);
-      tmpTo.set(v.pos.x, v.pos.y + 1.2, v.pos.z);
-      const dist = tmpFrom.distanceTo(tmpTo);
-      raycaster.set(tmpFrom, tmpTo.sub(tmpFrom).normalize());
-      const hits = raycaster.intersectObjects(shootables, false);
-      if (hits.length && hits[0].distance < dist - 0.5) continue; // behind cover
-      const dmg = 140 * Math.max(0.15, 1 - d / radius);
-      if (v.kind === 'player') damagePlayer(dmg, pos);
-      else damageBot(v.bot, dmg, 'body', 'player');
+    if (state.playerAlive) {
+      const damage = blastDamage(pos, player.mover.body.position);
+      if (damage > 0) damagePlayer(damage, pos);
+    }
+    for (const bot of botsApi?.bots ?? []) {
+      if (!bot.alive) continue;
+      const damage = blastDamage(pos, bot.mover.body.position);
+      if (damage > 0) damageBot(bot, damage, 'body', 'player');
     }
     checkRoundEnd();
   }
 
-  function stepProjectiles(dt) {
-    for (const p of projectiles) {
-      if (!p.alive) continue;
-      p.fuse -= dt;
-      p.vel.y -= 14 * dt;
-      p.pos.addScaledVector(p.vel, dt);
-      if (p.pos.y < 0.12) {
-        p.pos.y = 0.12;
-        p.vel.y = Math.abs(p.vel.y) > 1.5 ? -p.vel.y * 0.35 : 0;
-        p.vel.x *= 0.6;
-        p.vel.z *= 0.6;
+  function blastDamage(origin, victim) {
+    const horizontal = Math.hypot(origin.x - victim.x, origin.z - victim.z);
+    const weightedHeight = Math.abs(origin.y - victim.y - 1) * 0.4;
+    const radiusDistance = horizontal + weightedHeight;
+    if (radiusDistance > 7) return 0;
+    tmpFrom.set(origin.x, origin.y + 0.3, origin.z);
+    tmpTo.set(victim.x, victim.y + 1.2, victim.z);
+    tmpDir.subVectors(tmpTo, tmpFrom);
+    const targetDistance = tmpDir.length();
+    raycaster.set(tmpFrom, tmpDir.normalize());
+    shotHits.length = 0;
+    raycaster.intersectObjects(shootables, false, shotHits);
+    if (shotHits.length && shotHits[0].distance < targetDistance - 0.5) return 0;
+    return 140 * Math.max(1 - radiusDistance / 7, 0.15);
+  }
+
+  function bounceBoundary(grenade, axis, extent) {
+    const coordinate = grenade.pos[axis];
+    if (coordinate >= -extent && coordinate <= extent) return;
+    grenade.pos[axis] = coordinate < 0 ? -extent : extent;
+    grenade.vel[axis] *= -0.4;
+  }
+
+  function stepProjectiles(seconds) {
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const projectile = projectiles[i];
+      const { pos, vel } = projectile;
+      projectile.fuse -= seconds;
+      vel.y -= seconds * 14;
+      pos.addScaledVector(vel, seconds);
+      if (pos.y < 0.12) {
+        pos.y = 0.12;
+        vel.y = Math.abs(vel.y) > 1.5 ? -vel.y * 0.35 : 0;
+        vel.x *= 0.6;
+        vel.z *= 0.6;
       }
-      if (p.pos.x < -19.6 || p.pos.x > 19.6) p.vel.x *= -0.4;
-      if (p.pos.z < -15.6 || p.pos.z > 15.6) p.vel.z *= -0.4;
-      if (p.fuse <= 0) {
-        p.alive = false;
-        if (p.kind === 'frag') explodeFrag(p.pos);
-        else effects.smoke(p.pos.x, p.pos.y, p.pos.z);
+      bounceBoundary(projectile, 'x', 19.6);
+      bounceBoundary(projectile, 'z', 15.6);
+      if (projectile.fuse > 0) continue;
+      if (projectile.kind === 'smoke') {
+        effects.smoke(pos.x, pos.y, pos.z);
+      } else {
+        explodeFrag(pos);
       }
+      projectiles.splice(i, 1);
     }
   }
 
   // --- spike ---
+  function plantAt(x, z, planter) {
+    const charge = state.spike;
+    if (charge.state !== 'carried') return;
+    Object.assign(charge, {
+      state: 'planted',
+      timer: MAP.spikeTime,
+      plantProgress: 0,
+      defuseProgress: 0,
+      defuser: null,
+    });
+    charge.pos.set(x, 0, z);
+    state.money += PLANT_REWARD;
+    audio.plant();
+    emit('spikePlanted', { site: charge.site, ...(planter ? { by: planter } : {}) });
+  }
+
   function tryPlant(dt, holding) {
-    const site = siteCenter(state.spike.site);
-    const p = player.mover.body.position;
-    const inside = Math.hypot(p.x - site.x, p.z - site.z) < site.r;
-    if (!holding || !inside || !state.playerAlive) {
-      if (state.spike.plantProgress > 0) state.spike.plantProgress = 0;
+    const charge = state.spike;
+    const site = siteCenter(charge.site);
+    const position = player.mover.body.position;
+    const inZone = Math.hypot(position.x - site.x, position.z - site.z) < site.r;
+    if (!holding || !inZone || !state.playerAlive || state.phase !== 'live'
+      || charge.state !== 'carried' || charge.carrier !== 'player') {
+      charge.plantProgress = 0;
       return;
     }
-    state.spike.plantProgress += dt;
-    if (state.spike.plantProgress >= MAP.plantTime) {
-      state.spike.plantProgress = 0;
-      state.spike.state = 'planted';
-      state.spike.pos.set(site.x, 0, site.z);
-      state.spike.timer = MAP.spikeTime;
-      state.money += 300;
-      audio.plant();
-      emit('spikePlanted', { site: state.spike.site });
-    }
+    charge.plantProgress += dt;
+    if (charge.plantProgress >= MAP.plantTime) plantAt(site.x, site.z);
   }
 
   function checkRoundEnd() {
     if (state.phase !== 'live') return;
-    const vAlive = (state.playerAlive ? 1 : 0) + (botsApi ? botsApi.aliveCount('V') : 0);
-    const jAlive = botsApi ? botsApi.aliveCount('J') : 0;
-    if (state.spike.state === 'planted') {
-      if (jAlive === 0) endRound('V', 'Spike site cleared — detonation imminent');
-      return; // defenders must defuse or the timer decides
+    const attackers = Number(state.playerAlive) + (botsApi?.aliveCount('V') ?? 0);
+    const defenders = botsApi?.aliveCount('J') ?? 0;
+    const planted = state.spike.state === 'planted';
+    if (defenders === 0) {
+      endRound('V', planted ? 'Spike site cleared — detonation imminent' : 'Enemy team eliminated');
+    } else if (attackers === 0 && !planted) {
+      endRound('J', 'Your team was eliminated');
     }
-    if (jAlive === 0) endRound('V', 'Enemy team eliminated');
-    else if (vAlive === 0) endRound('J', 'Your team was eliminated');
   }
 
   // --- buying ---
   function buy(itemId) {
     if (state.phase !== 'buy') return { ok: false, why: 'Buy phase is over' };
-    const all = { ...WEAPONS, ...GRENADES, ...GEAR };
-    const item = all[itemId];
-    if (!item) return { ok: false, why: 'Unknown item' };
+    if (!Object.hasOwn(CATALOGUE, itemId)) return { ok: false, why: 'Unknown item' };
+    const item = CATALOGUE[itemId];
     if (itemId === 'p9') return { ok: false, why: 'The P9 is already yours' };
-    if (WEAPONS[itemId]) {
-      if (state.primaryId === itemId) return { ok: false, why: 'Already owned' };
-      if (state.money < item.price) return { ok: false, why: 'Not enough money' };
-      state.money -= item.price;
+    if (state.primaryId === itemId) return { ok: false, why: 'Already owned' };
+    const grenade = Object.hasOwn(GRENADES, itemId);
+    if (grenade && state.grenades[itemId] > 0) return { ok: false, why: 'Already carrying one' };
+    if (itemId === 'kevlar' && state.hasKevlar) return { ok: false, why: 'Already wearing kevlar' };
+    if (itemId === 'kit' && state.hasKit) return { ok: false, why: 'Already carrying a kit' };
+    if (state.money < item.price) return { ok: false, why: 'Not enough money' };
+
+    // Cash changes only after every inventory restriction has passed.
+    if (Object.hasOwn(WEAPONS, itemId)) {
       givePrimary(itemId);
-    } else if (GRENADES[itemId]) {
-      if (state.grenades[itemId] >= 1) return { ok: false, why: 'Already carrying one' };
-      if (state.money < item.price) return { ok: false, why: 'Not enough money' };
-      state.money -= item.price;
+    } else if (grenade) {
       state.grenades[itemId] = 1;
     } else if (itemId === 'kevlar') {
-      if (state.hasKevlar) return { ok: false, why: 'Already wearing kevlar' };
-      if (state.money < item.price) return { ok: false, why: 'Not enough money' };
-      state.money -= item.price;
       state.hasKevlar = true;
       state.playerArmor = 100;
-    } else if (itemId === 'kit') {
-      if (state.hasKit) return { ok: false, why: 'Already carrying a kit' };
-      if (state.money < item.price) return { ok: false, why: 'Not enough money' };
-      state.money -= item.price;
+    } else {
       state.hasKit = true;
     }
+    state.money -= item.price;
     audio.buy();
     emit('bought', { item: itemId, money: state.money });
     return { ok: true };
@@ -436,66 +469,73 @@ export function createGame(opts) {
 
   function switchWeapon() {
     if (!state.primaryId || !player.sidearm) return;
-    const tmp = player.weapon;
-    player.weapon = player.sidearm;
-    player.sidearm = tmp;
+    [player.weapon, player.sidearm] = [player.sidearm, player.weapon];
     emit('weaponSwitched', { name: player.weapon.def.name });
   }
 
   // --- per-frame simulation (fixed step) ---
-  function step(dt, input) {
-    state.time += dt;
-    if (state.phase === 'buy') {
-      state.phaseTime -= dt;
-      if (state.phaseTime <= 0) {
-        state.phase = 'live';
-        state.phaseTime = MAP.roundTime;
-        emit('roundLive', {});
-      }
-    } else if (state.phase === 'live') {
-      state.phaseTime -= dt;
-      // spike timer
-      if (state.spike.state === 'planted') {
-        state.spike.timer -= dt;
-        if (Math.ceil(state.spike.timer * 2) !== Math.ceil((state.spike.timer + dt) * 2)) {
-          if (state.spike.timer < 10) audio.beep(state.spike.timer < 3);
-        }
-        if (state.spike.timer <= 0) {
-          effects.explosion(state.spike.pos, 8);
-          audio.explosion(player.mover.body.position.distanceTo(state.spike.pos));
-          endRound('V', 'Spike detonated');
-          return;
-        }
-      }
-      if (state.phaseTime <= 0 && state.spike.state !== 'planted') {
-        endRound(state.spike.state === 'planted' ? 'V' : 'J', state.spike.state === 'planted' ? 'Spike detonated' : 'Time expired — spike never planted');
-        return;
-      }
+  function advanceLiveRound(seconds) {
+    const charge = state.spike;
+    state.phaseTime -= seconds;
+    if (charge.state !== 'planted') {
+      if (state.phaseTime <= 0) endRound('J', 'Time expired — spike never planted');
+      else checkRoundEnd();
+      return;
+    }
+    const previousBeat = Math.ceil(charge.timer * 2);
+    charge.timer -= seconds;
+    const beat = Math.ceil(charge.timer * 2);
+    if (beat !== previousBeat && charge.timer < 10) audio.beep(charge.timer < 3);
+    if (charge.timer > 0) {
       checkRoundEnd();
-    } else if (state.phase === 'over') {
-      state.phaseTime -= dt;
-      if (state.phaseTime <= 0) nextRound();
+      return;
     }
-    stepProjectiles(dt);
-    if (player) {
-      weaponStep(player.weapon, dt);
-      if (player.sidearm) weaponStep(player.sidearm, dt);
-    }
-    // planted spike device: visible charge + blinking beacon while the
-    // round is live; hidden once the round is decided (the charge is gone
-    // after detonation, and a defuse hands the round to the Jackals).
-    if (state.spike.state === 'planted' && state.phase === 'live') {
-      spikeGroup.visible = true;
-      spikeGroup.position.set(state.spike.pos.x, 0, state.spike.pos.z);
-      const blink = Math.sin(state.time * 6) > 0;
-      spikeLight.position.set(state.spike.pos.x, 1.2, state.spike.pos.z);
-      spikeLight.intensity = blink ? 22 : 8;
-      spikeRing.scale.setScalar(1 + 0.15 * Math.sin(state.time * 3));
-      spikeRing.material.opacity = blink ? 0.65 : 0.45;
-    } else {
-      spikeGroup.visible = false;
+    effects.explosion(charge.pos, 8);
+    audio.explosion(player.mover.body.position.distanceTo(charge.pos));
+    endRound('V', 'Spike detonated');
+  }
+
+  function updateChargeModel() {
+    const charge = state.spike;
+    const active = state.phase === 'live' && charge.state === 'planted';
+    spikeGroup.visible = active;
+    if (!active) {
       spikeLight.intensity = 0;
+      return;
     }
+    spikeGroup.position.set(charge.pos.x, 0, charge.pos.z);
+    spikeLight.position.set(charge.pos.x, 1.2, charge.pos.z);
+    const bright = Math.sin(6 * state.time) > 0;
+    spikeLight.intensity = bright ? 22 : 8;
+    spikeRing.material.opacity = bright ? 0.65 : 0.45;
+    spikeRing.scale.setScalar(Math.sin(3 * state.time) * 0.15 + 1);
+  }
+
+  function step(seconds) {
+    state.time += seconds;
+    switch (state.phase) {
+      case 'buy':
+        state.phaseTime -= seconds;
+        if (state.phaseTime <= 0) {
+          state.phase = 'live';
+          state.phaseTime = MAP.roundTime;
+          emit('roundLive');
+        }
+        break;
+      case 'live':
+        advanceLiveRound(seconds);
+        break;
+      case 'over':
+        state.phaseTime -= seconds;
+        if (state.phaseTime <= 0) nextRound();
+        break;
+    }
+    stepProjectiles(seconds);
+    if (player !== null) {
+      weaponStep(player.weapon, seconds);
+      if (player.sidearm) weaponStep(player.sidearm, seconds);
+    }
+    updateChargeModel();
   }
 
   return {
@@ -530,13 +570,8 @@ export function createGame(opts) {
       return siteCenter(state.spike.site);
     },
     spikePlantedBy(bot) {
-      if (state.spike.state !== 'carried') return;
-      state.spike.state = 'planted';
-      state.spike.pos.set(bot.mover.body.position.x, 0, bot.mover.body.position.z);
-      state.spike.timer = MAP.spikeTime;
-      state.money += 300;
-      audio.plant();
-      emit('spikePlanted', { site: state.spike.site, by: bot.name });
+      const { x, z } = bot.mover.body.position;
+      plantAt(x, z, bot.name);
     },
     spikeDefusedBy(bot) {
       if (state.spike.state !== 'planted') return;

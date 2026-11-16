@@ -1,5 +1,4 @@
-// Keyboard + mouse input with pointer lock. One shared state object; the
-// simulation reads it, the renderer never does.
+// Accumulate browser input until the next fixed simulation tick.
 export function createInput(canvas, onLockChange) {
   const state = {
     keys: new Set(),
@@ -11,74 +10,84 @@ export function createInput(canvas, onLockChange) {
     pressed: new Set(), // keys pressed since last takePressed() (edge events)
   };
 
-  function onKeyDown(event) {
-    if (event.repeat) return;
-    state.keys.add(event.code);
-    state.pressed.add(event.code);
-    if (event.code === 'Space') event.preventDefault();
-  }
-  function onKeyUp(event) {
-    state.keys.delete(event.code);
-  }
-  function onMouseDown(event) {
-    if (!state.locked) return;
-    if (event.button === 0) state.firing = true;
-    if (event.button === 2) state.firingAlt = true;
-  }
-  function onMouseUp(event) {
-    if (event.button === 0) state.firing = false;
-    if (event.button === 2) state.firingAlt = false;
-  }
-  function onMouseMove(event) {
-    if (!state.locked) return;
-    state.lookX += event.movementX;
-    state.lookY += event.movementY;
-  }
-  function onLock() {
-    state.locked = document.pointerLockElement === canvas;
-    if (!state.locked) {
-      state.keys.clear();
-      state.pressed.clear();
-      state.firing = false;
-      state.firingAlt = false;
-    }
-    onLockChange(state.locked);
-  }
-  function onContextMenu(event) {
-    event.preventDefault();
+  function reset() {
+    state.keys.clear();
+    state.pressed.clear();
+    state.firing = false;
+    state.firingAlt = false;
+    state.lookX = 0;
+    state.lookY = 0;
   }
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
-  document.addEventListener('pointerlockchange', onLock);
-  canvas.addEventListener('contextmenu', onContextMenu);
+  function keyDown(event) {
+    const { code, repeat } = event;
+    if (code === 'Space') event.preventDefault();
+    if (repeat) return;
+    state.keys.add(code);
+    state.pressed.add(code);
+  }
+  function keyUp(event) {
+    state.keys.delete(event.code);
+  }
+  function mouseButton(event) {
+    const down = event.type === 'mousedown';
+    if (down && !state.locked) return;
+    switch (event.button) {
+      case 0: state.firing = down; break;
+      case 2: state.firingAlt = down; break;
+    }
+  }
+  function mouseLook({ movementX, movementY }) {
+    if (state.locked) {
+      state.lookX += movementX;
+      state.lookY += movementY;
+    }
+  }
+  window.addEventListener('keydown', keyDown);
+  window.addEventListener('keyup', keyUp);
+  window.addEventListener('mousedown', mouseButton);
+  window.addEventListener('mouseup', mouseButton);
+  window.addEventListener('mousemove', mouseLook);
+  window.addEventListener('blur', reset);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) reset();
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  document.addEventListener('pointerlockchange', () => {
+    state.locked = document.pointerLockElement === canvas;
+    if (!state.locked) reset();
+    onLockChange(state.locked);
+  });
+
+  const lookSample = { x: 0, y: 0 };
+  let spareEdges = new Set();
 
   return {
     state,
     requestLock() {
       try {
-        const p = canvas.requestPointerLock();
-        if (p && p.catch) p.catch(() => {});
+        const request = canvas.requestPointerLock();
+        request?.catch(() => {});
       } catch {
-        // headless / no user gesture: the game still runs without the lock
+        // Browser automation may have no user activation; a later click retries.
       }
     },
     releaseLock() {
       if (document.pointerLockElement) document.exitPointerLock();
     },
     takeLook() {
-      const look = { x: state.lookX, y: state.lookY };
+      lookSample.x = state.lookX;
+      lookSample.y = state.lookY;
       state.lookX = 0;
       state.lookY = 0;
-      return look;
+      return lookSample;
     },
     takePressed() {
-      const pressed = state.pressed;
-      state.pressed = new Set();
-      return pressed;
+      const consumed = state.pressed;
+      spareEdges.clear();
+      state.pressed = spareEdges;
+      spareEdges = consumed;
+      return consumed;
     },
   };
 }

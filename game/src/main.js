@@ -3,9 +3,7 @@
 // stages a deterministic frame, renders it twice, freezes it and sets
 // window.__shotReady (used by the screenshot tooling).
 import * as THREE from 'three';
-import { PALETTE } from './palette.js';
-import { MAP } from './world.js';
-import { createWorld } from './world.js';
+import { MAP, createWorld } from './world.js';
 import { createInput } from './input.js';
 import { createPlayer } from './player.js';
 import { createAudio } from './audio.js';
@@ -19,6 +17,7 @@ import {
 } from './weapons.js';
 
 const FIXED_STEP = 1 / 60;
+const BUY_KEYS = ['vk9', 'ar77', 'lancer', 'frag', 'smoke', 'kevlar', 'kit'];
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 const seed = Number.parseInt(params.get('seed') ?? '1', 10) || 1;
@@ -69,32 +68,35 @@ const losRay = new THREE.Raycaster();
 losRay.far = 95;
 const losDir = new THREE.Vector3();
 const losTmp = new THREE.Vector3();
+const muzzleColor = new THREE.Color(0xffc46b);
 
 function hasLineOfSight(from, to, dist) {
-  losDir.copy(to).sub(from);
-  const d = dist ?? losDir.length();
-  losDir.normalize();
-  losRay.set(from, losDir);
-  const hits = losRay.intersectObjects(world.shootables, false);
-  return !(hits.length && hits[0].distance < d - 0.4);
+  losDir.subVectors(to, from);
+  const distance = dist ?? losDir.length();
+  losRay.set(from, losDir.normalize());
+  sightHits.length = 0;
+  losRay.intersectObjects(world.shootables, false, sightHits);
+  return !sightHits.length || sightHits[0].distance >= distance - 0.4;
 }
+const sightHits = [];
 
 const botsApi = {
   resetRound(round) {
     bots.resetRound(round);
   },
   nearestAliveAlly(pos) {
-    let best = null;
-    let bestD = Infinity;
-    for (const b of bots.bots) {
-      if (b.team !== 'V' || !b.alive) continue;
-      const d = Math.hypot(b.mover.body.position.x - pos.x, b.mover.body.position.z - pos.z);
-      if (d < bestD) {
-        bestD = d;
-        best = b;
+    let nearest = null;
+    let minimum = Infinity;
+    for (const actor of bots.bots) {
+      if (actor.team !== 'V' || !actor.alive) continue;
+      const point = actor.mover.body.position;
+      const separation = Math.hypot(point.x - pos.x, point.z - pos.z);
+      if (separation < minimum) {
+        minimum = separation;
+        nearest = actor;
       }
     }
-    return best;
+    return nearest;
   },
   kill(bot) {
     bots.kill(bot);
@@ -113,12 +115,13 @@ const botsApi = {
     return effects.blockedBySmoke(a, b);
   },
   enemiesOf(bot) {
-    const out = [];
-    if (bot.team === 'J' && game.state.playerAlive) out.push({ kind: 'player', ref: player.mover.body });
-    for (const other of bots.bots) {
-      if (other.team !== bot.team && other.alive) out.push({ kind: 'bot', ref: other });
+    const enemies = bots.bots
+      .filter((candidate) => candidate.alive && candidate.team !== bot.team)
+      .map((candidate) => ({ kind: 'bot', ref: candidate }));
+    if (bot.team === 'J' && game.state.playerAlive) {
+      enemies.unshift({ kind: 'player', ref: player.mover.body });
     }
-    return out;
+    return enemies;
   },
   damagePlayer(amount, fromPos) {
     game.damagePlayer(amount, fromPos);
@@ -134,7 +137,7 @@ const botsApi = {
   },
   botMuzzle(bot) {
     losTmp.set(bot.mover.body.position.x, bot.mover.body.position.y + 1.25, bot.mover.body.position.z);
-    effects.burstParticles(losTmp, 3, new THREE.Color(0xffc46b), 2);
+    effects.burstParticles(losTmp, 3, muzzleColor, 2);
   },
   time() {
     return game.state.time;
@@ -200,7 +203,6 @@ let stepAcc = 0;
 
 // --- game state ---
 const body = player.mover.body;
-let started = false;
 let frozen = false;
 let paused = false;
 let accumulator = 0;
@@ -211,28 +213,29 @@ let muted = false;
 let prevFiring = false;
 
 function syncCamera() {
-  camera.position.set(body.position.x, body.position.y + body.eye, body.position.z);
+  camera.position.copy(body.position);
+  camera.position.y += body.eye;
   camera.rotation.set(body.pitch, body.yaw, 0, 'YXZ');
 }
 
 function aimAt(point) {
   const dx = point.x - body.position.x;
-  const dy = point.y - (body.position.y + body.eye);
   const dz = point.z - body.position.z;
-  const length = Math.hypot(dx, dy, dz) || 1;
+  const dy = point.y - (body.position.y + body.eye);
   body.yaw = Math.atan2(-dx, -dz);
-  body.pitch = Math.asin(Math.max(-1, Math.min(1, dy / length)));
+  body.pitch = Math.atan2(dy, Math.hypot(dx, dz));
   syncCamera();
 }
 
 function shoot(spread) {
-  const ok = game.playerShoot(camera, spread);
-  if (ok) {
-    viewRecoil = Math.min(1, viewRecoil + 0.55);
-    player.recoil(player.weapon.def.recoil * (0.8 + Math.random() * 0.4), (Math.random() * 2 - 1) * 0.003);
-    hud.setAmmo(player.weapon.mag, player.weapon.reserve);
-  }
-  return ok;
+  if (!game.playerShoot(camera, spread)) return false;
+  const gun = player.weapon;
+  viewRecoil = Math.min(1, viewRecoil + 0.55);
+  const vertical = (Math.random() * 0.4 + 0.8) * gun.def.recoil;
+  const horizontal = (Math.random() * 2 - 1) * 0.003;
+  player.recoil(vertical, horizontal);
+  hud.setAmmo(gun.mag, gun.reserve);
+  return true;
 }
 
 function shootAt(point) {
@@ -245,33 +248,40 @@ function settle(steps) {
 }
 
 function ownedMap() {
-  const owned = { p9: true };
-  if (game.state.primaryId) owned[game.state.primaryId] = true;
-  if (game.state.grenades.frag) owned.frag = true;
-  if (game.state.grenades.smoke) owned.smoke = true;
-  if (game.state.hasKevlar) owned.kevlar = true;
-  if (game.state.hasKit) owned.kit = true;
+  const match = game.state;
+  const owned = {
+    p9: true,
+    frag: match.grenades.frag > 0,
+    smoke: match.grenades.smoke > 0,
+    kevlar: match.hasKevlar,
+    kit: match.hasKit,
+  };
+  if (match.primaryId !== null) owned[match.primaryId] = true;
   return owned;
 }
 
 function refreshHud() {
-  const S = game.state;
-  hud.setHealth(S.playerHp, S.playerArmor);
-  hud.setAmmo(player.weapon.mag, player.weapon.reserve, player.weapon.def.name);
-  hud.setGrenades(S.grenades.frag, S.grenades.smoke);
-  hud.setMoney(S.money);
-  hud.setScore(S.scoreV, S.scoreJ, S.round);
-  hud.refreshBuy(S.money, ownedMap());
-  const timer = S.phase === 'buy' ? S.phaseTime : S.spike.state === 'planted' ? S.spike.timer : S.phaseTime;
-  hud.setTimer(timer, S.spike.state === 'planted');
-  if (S.spike.state === 'planted') hud.setSpike('planted', S.spike.timer);
-  else if (S.spike.carrier === 'player' && S.phase === 'live') {
-    const site = S.spike.site === 'A' ? MAP.siteA : MAP.siteB;
-    const d = Math.hypot(body.position.x - site.x, body.position.z - site.z);
-    hud.setSpike(d < site.r ? 'site' : 'carry', site.name);
-  } else if (S.spike.carrier !== 'player' && S.phase === 'live') {
-    hud.setSpike('carry', `with your squad — site ${S.spike.site}`);
-  } else hud.setSpike('none');
+  const state = game.state;
+  const objective = state.spike;
+  hud.setHealth(state.playerHp, state.playerArmor);
+  updateLoadoutHud();
+  hud.setMoney(state.money);
+  hud.setScore(state.scoreV, state.scoreJ, state.round);
+  hud.refreshBuy(state.money, ownedMap());
+  const planted = objective.state === 'planted';
+  const clock = planted && state.phase !== 'buy' ? objective.timer : state.phaseTime;
+  hud.setTimer(clock, planted);
+  if (planted) {
+    hud.setSpike('planted', objective.timer);
+  } else if (state.phase !== 'live') {
+    hud.setSpike('none');
+  } else if (objective.carrier !== 'player') {
+    hud.setSpike('carry', `with your squad — site ${objective.site}`);
+  } else {
+    const zone = objective.site === 'A' ? MAP.siteA : MAP.siteB;
+    const separation = Math.hypot(zone.x - body.position.x, zone.z - body.position.z);
+    hud.setSpike(separation < zone.r ? 'site' : 'carry', zone.name);
+  }
 }
 
 // drain game events into HUD + audio
@@ -335,31 +345,21 @@ hud.onPlay(() => {
   if (shot) return;
   audio.unlock();
   paused = false;
-  if (game.state.phase === 'menu') {
+  if (game.state.phase === 'menu' || game.state.phase === 'matchover') {
     game.resetMatch();
-    game.state.phase = 'buy';
-    started = true;
-    hud.hideOverlay();
-    input.requestLock();
-  } else if (game.state.phase === 'matchover') {
-    game.resetMatch();
-    hud.hideOverlay();
-    input.requestLock();
-  } else {
-    hud.hideOverlay();
-    input.requestLock();
   }
+  hud.hideOverlay();
+  input.requestLock();
 });
 
 hud.onBuy((itemId) => {
-  const res = game.buy(itemId);
-  if (!res.ok) {
+  const purchase = game.buy(itemId);
+  if (!purchase.ok) {
     audio.denied();
-    hud.setHint(res.why);
+    hud.setHint(purchase.why);
     setTimeout(() => hud.setHint(''), 1500);
   } else {
-    hud.setAmmo(player.weapon.mag, player.weapon.reserve, player.weapon.def.name);
-    hud.setGrenades(game.state.grenades.frag, game.state.grenades.smoke);
+    updateLoadoutHud();
   }
 });
 
@@ -367,7 +367,7 @@ function onLockChange(locked) {
   if (shot) return;
   if (locked) {
     paused = false;
-    started = true;
+    accumulator = 0;
     hud.hideOverlay();
     if (buyOpen) hud.showBuy(true);
   } else if (game.state.phase !== 'menu' && game.state.phase !== 'matchover' && game.state.playerAlive) {
@@ -377,133 +377,151 @@ function onLockChange(locked) {
   }
 }
 
-function step(dt) {
-  const S = game.state;
-  // keep world matrices fresh for raycasts (staging runs steps with no render)
-  scene.updateMatrixWorld(true);
-  // look
-  const look = input.takeLook();
-  const sens = scoped ? 0.0009 : 0.0021;
-  player.look(look.x, look.y, sens);
-  // scope
-  const wantScope = input.state.firingAlt && player.weapon.def.scoped && weaponReady(player.weapon);
-  if (wantScope !== scoped) {
-    scoped = wantScope;
-    hud.setScope(scoped);
-    camera.fov = scoped ? 32 : 74;
-    camera.updateProjectionMatrix();
-  }
-  // firing (semi-auto needs a fresh press)
-  const firing = input.state.firing;
-  if (firing && S.playerAlive && S.phase === 'live') {
-    if (player.weapon.def.auto || (!prevFiring && firing)) {
-      if (weaponReady(player.weapon) || player.weapon.mag === 0) {
-        const spread = weaponSpread(player.weapon, player.groundSpeed(), scoped);
-        shoot(spread);
-      }
-    }
-  }
-  prevFiring = firing;
-  // reload
-  const pressed = input.takePressed();
-  if (pressed.has('KeyR') && S.playerAlive) {
-    if (weaponReload(player.weapon)) {
-      audio.reload();
+function updateScope() {
+  const gun = player.weapon;
+  const nextScope = Boolean(input.state.firingAlt && gun.def.scoped && weaponReady(gun));
+  if (scoped === nextScope) return;
+  scoped = nextScope;
+  camera.fov = scoped ? 32 : 74;
+  camera.updateProjectionMatrix();
+  hud.setScope(scoped);
+}
+
+function handleTrigger() {
+  const held = input.state.firing;
+  const pressedNow = held && !prevFiring;
+  prevFiring = held;
+  if (!held || game.state.phase !== 'live' || !game.state.playerAlive) return;
+  const gun = player.weapon;
+  if (!gun.def.auto && !pressedNow) return;
+  if (!weaponReady(gun) && gun.mag > 0) return;
+  shoot(weaponSpread(gun, player.groundSpeed(), scoped));
+}
+
+function updateLoadoutHud() {
+  const { mag, reserve, def } = player.weapon;
+  const { frag, smoke } = game.state.grenades;
+  hud.setAmmo(mag, reserve, def.name);
+  hud.setGrenades(frag, smoke);
+}
+
+function handleKeys(pressed) {
+  const state = game.state;
+  if (state.playerAlive) {
+    if (pressed.has('KeyR') && weaponReload(player.weapon)) {
       viewReload = 1;
+      audio.reload();
+    }
+    if (pressed.has('KeyQ')) game.switchWeapon();
+    if (state.phase === 'live') {
+      if (pressed.has('KeyG')) game.playerThrowGrenade('frag', camera);
+      if (pressed.has('KeyT')) game.playerThrowGrenade('smoke', camera);
     }
   }
-  if (pressed.has('KeyQ') && S.playerAlive) game.switchWeapon();
-  if (pressed.has('KeyG') && S.playerAlive && S.phase === 'live') game.playerThrowGrenade('frag', camera);
-  if (pressed.has('KeyT') && S.playerAlive && S.phase === 'live') game.playerThrowGrenade('smoke', camera);
-  if (pressed.has('KeyB') && S.phase === 'buy') {
+  if (pressed.has('KeyB') && state.phase === 'buy') {
     buyOpen = !buyOpen;
     hud.showBuy(buyOpen);
-    hud.refreshBuy(S.money, ownedMap());
+    hud.refreshBuy(state.money, ownedMap());
   }
   if (pressed.has('KeyM')) {
-    // mute toggle
-    audio.setEnabled(muted);
     muted = !muted;
+    audio.setEnabled(!muted);
   }
-  // buy hotkeys 1..7 while the menu is open
-  if (buyOpen && S.phase === 'buy') {
-    const ids = ['vk9', 'ar77', 'lancer', 'frag', 'smoke', 'kevlar', 'kit'];
-    for (let i = 0; i < ids.length; i += 1) {
-      if (pressed.has(`Digit${i + 1}`)) {
-        const res = game.buy(ids[i]);
-        if (!res.ok) audio.denied();
-        else {
-          hud.setAmmo(player.weapon.mag, player.weapon.reserve, player.weapon.def.name);
-          hud.setGrenades(S.grenades.frag, S.grenades.smoke);
-        }
-      }
-    }
+  if (state.phase !== 'buy' || !buyOpen) return;
+  for (let i = 0; i < BUY_KEYS.length; i++) {
+    if (!pressed.has(`Digit${i + 1}`)) continue;
+    if (game.buy(BUY_KEYS[i]).ok) updateLoadoutHud();
+    else audio.denied();
   }
-  // plant: hold E while carrying the spike inside the site
-  if (S.phase === 'live' && S.playerAlive && S.spike.state === 'carried' && S.spike.carrier === 'player') {
-    game.tryPlant(dt, input.state.keys.has('KeyE'));
-    if (S.spike.plantProgress > 0) {
-      hud.setHint(`Planting… ${Math.ceil((1 - S.spike.plantProgress / MAP.plantTime) * 10) / 10}s — hold E`);
-    }
+}
+
+let plantingHint = false;
+function handlePlant(dt) {
+  const state = game.state;
+  const { spike } = state;
+  const carrying = spike.state === 'carried' && spike.carrier === 'player';
+  const allowed = state.playerAlive && state.phase === 'live' && carrying;
+  if (allowed) game.tryPlant(dt, input.state.keys.has('KeyE'));
+  const showing = allowed && spike.plantProgress > 0;
+  if (showing) {
+    const remaining = Math.max(0, MAP.plantTime - spike.plantProgress);
+    hud.setHint(`Planting… ${remaining.toFixed(1)}s — hold E`);
+  } else if (plantingHint) {
+    hud.setHint('');
   }
-  // movement
-  if (S.playerAlive && (S.phase === 'live' || S.phase === 'buy')) {
-    const speedScale = (scoped ? 0.45 : 1) * (player.weapon.def.speed / 5.4);
-    player.step(dt, input.state.keys, speedScale);
-    // footsteps
-    stepAcc += player.groundSpeed() * dt;
-    if (stepAcc > 2.4) {
-      stepAcc = 0;
-      audio.step();
-    }
-  }
+  plantingHint = showing;
+}
+
+function movePlayer(dt) {
+  const { phase, playerAlive } = game.state;
+  if (!playerAlive || (phase !== 'buy' && phase !== 'live')) return;
+  const equipmentSpeed = player.weapon.def.speed / 5.4;
+  player.step(dt, input.state.keys, equipmentSpeed * (scoped ? 0.45 : 1));
+  stepAcc += dt * player.groundSpeed();
+  if (stepAcc <= 2.4) return;
+  stepAcc = 0;
+  audio.step();
+}
+
+function animateViewmodel(dt) {
+  viewRecoil = Math.max(viewRecoil - 6 * dt, 0);
+  viewReload = Math.max(viewReload - 1.4 * dt, 0);
+  const moving = game.state.playerAlive && player.groundSpeed() > 0.5;
+  const bob = moving ? Math.sin(game.state.time * 11) * 0.008 : 0;
+  viewmodel.position.set(0.3, -0.27 - 0.12 * viewReload + bob, -0.55 + 0.09 * viewRecoil);
+  viewmodel.rotation.x = 0.7 * viewReload + 0.14 * viewRecoil;
+}
+
+function step(dt) {
+  // This also runs without rendering in the screenshot and test drivers.
+  scene.updateMatrixWorld(true);
+  const { x, y } = input.takeLook();
+  player.look(x, y, scoped ? 0.0009 : 0.0021);
+  syncCamera();
+  updateScope();
+  handleTrigger();
+  handleKeys(input.takePressed());
+  handlePlant(dt);
+  movePlayer(dt);
   game.step(dt, input);
-  // Bots fight only while the round is live: the buy phase is a freeze,
-  // and a decided round is over.
-  if (S.phase === 'live') bots.step(dt);
+  if (game.state.phase === 'live') bots.step(dt);
   effects.step(dt);
-  // viewmodel motion
-  viewRecoil = Math.max(0, viewRecoil - dt * 6);
-  viewReload = Math.max(0, viewReload - dt * 1.4);
-  const bob = player.groundSpeed() > 0.5 && S.playerAlive ? Math.sin(performance.now() * 0.011) * 0.008 : 0;
-  viewmodel.position.z = -0.55 + viewRecoil * 0.09;
-  viewmodel.position.y = -0.27 + bob - viewReload * 0.12;
-  viewmodel.rotation.x = viewRecoil * 0.14 + viewReload * 0.7;
+  animateViewmodel(dt);
   drainEvents();
   refreshHud();
-  hud.setCrosshair(4 + weaponSpread(player.weapon, player.groundSpeed(), scoped) * 240);
+  const spread = weaponSpread(player.weapon, player.groundSpeed(), scoped);
+  hud.setCrosshair(4 + 240 * spread);
   syncCamera();
 }
 
 function frame(now) {
-  requestAnimationFrame(frame);
-  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  const elapsed = Math.max(0, Math.min((now - lastTime) / 1000, 0.1));
   lastTime = now;
   if (!frozen && !paused) {
-    accumulator += dt;
-    let steps = 0;
-    while (accumulator >= FIXED_STEP && steps < 5) {
+    accumulator += elapsed;
+    for (let tick = 0; tick < 5 && accumulator >= FIXED_STEP; tick++) {
       step(FIXED_STEP);
       accumulator -= FIXED_STEP;
-      steps += 1;
     }
-    if (accumulator > FIXED_STEP * 5) accumulator = 0;
+    if (accumulator > 5 * FIXED_STEP) accumulator = 0;
     syncCamera();
     hud.drawMinimap(now, body.position, body.yaw, bots.bots, game.state.spike);
   }
   renderer.render(scene, camera);
+  requestAnimationFrame(frame);
 }
 
 function paintTwiceThenReady() {
-  let painted = 0;
+  let framesLeft = 2;
   function paint() {
-    requestAnimationFrame(paint);
     syncCamera();
     renderer.render(scene, camera);
-    painted += 1;
-    if (painted === 2) {
-      window.__shotReady = true;
+    framesLeft -= 1;
+    if (framesLeft === 0) {
       frozen = true;
+      window.__shotReady = true;
+    } else {
+      requestAnimationFrame(paint);
     }
   }
   requestAnimationFrame(paint);

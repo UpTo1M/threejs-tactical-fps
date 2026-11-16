@@ -6,6 +6,7 @@ import * as THREE from 'three';
 const MAX_PARTICLES = 512;
 const MAX_TRACERS = 32;
 const MAX_CLOUDS = 6;
+const SMOKE_RADIUS_SQUARED = 2.6 ** 2;
 
 export function createEffects(scene, camera) {
   // --- impact sparks: one Points cloud, fixed buffers ---
@@ -21,6 +22,8 @@ export function createEffects(scene, camera) {
   const pVel = new Float32Array(MAX_PARTICLES * 3);
   const pLife = new Float32Array(MAX_PARTICLES);
   let pNext = 0;
+  // Inactive slots start below the floor, just like expired particles.
+  for (let index = 1; index < pPos.length; index += 3) pPos[index] = -100;
 
   // --- tracers: pooled lines ---
   const tracers = [];
@@ -99,45 +102,41 @@ export function createEffects(scene, camera) {
   }
   let cNext = 0;
 
-  const tmpA = new THREE.Vector3();
-  const tmpB = new THREE.Vector3();
-
   function burstParticles(origin, count, color, speed = 4) {
-    for (let n = 0; n < count; n += 1) {
-      const i = pNext;
+    for (let n = 0; n < count; n++) {
+      const slot = pNext;
       pNext = (pNext + 1) % MAX_PARTICLES;
-      pPos[i * 3] = origin.x;
-      pPos[i * 3 + 1] = origin.y;
-      pPos[i * 3 + 2] = origin.z;
-      const a = Math.random() * Math.PI * 2;
-      const b = Math.random() * Math.PI - Math.PI / 2;
-      const s = speed * (0.4 + Math.random() * 0.8);
-      pVel[i * 3] = Math.cos(a) * Math.cos(b) * s;
-      pVel[i * 3 + 1] = Math.abs(Math.sin(b)) * s + 1.2;
-      pVel[i * 3 + 2] = Math.sin(a) * Math.cos(b) * s;
-      pCol[i * 3] = color.r;
-      pCol[i * 3 + 1] = color.g;
-      pCol[i * 3 + 2] = color.b;
-      pLife[i] = 0.35 + Math.random() * 0.4;
+      const offset = slot * 3;
+      pGeo.attributes.position.setXYZ(slot, origin.x, origin.y, origin.z);
+      const azimuth = Math.random() * (2 * Math.PI);
+      const elevation = (Math.random() - 0.5) * Math.PI;
+      const velocity = speed * (0.4 + Math.random() * 0.8);
+      const horizontal = velocity * Math.cos(elevation);
+      pVel[offset] = horizontal * Math.cos(azimuth);
+      pVel[offset + 1] = velocity * Math.abs(Math.sin(elevation)) + 1.2;
+      pVel[offset + 2] = horizontal * Math.sin(azimuth);
+      pGeo.attributes.color.setXYZ(slot, color.r, color.g, color.b);
+      pLife[slot] = 0.35 + Math.random() * 0.4;
     }
-    pGeo.attributes.position.needsUpdate = true;
-    pGeo.attributes.color.needsUpdate = true;
+    pGeo.getAttribute('position').needsUpdate = true;
+    pGeo.getAttribute('color').needsUpdate = true;
   }
 
   function addTracer(from, to) {
-    // A non-finite endpoint would poison the line's bounding sphere; drop it loudly.
-    if (!Number.isFinite(from.x + from.y + from.z + to.x + to.y + to.z)) {
-      return;
-    }
-    const t = tracers[tNext];
+    if (!finitePoint(from) || !finitePoint(to)) return;
+    const tracer = tracers[tNext];
     tNext = (tNext + 1) % MAX_TRACERS;
-    const attr = t.line.geometry.attributes.position;
-    attr.array[0] = from.x; attr.array[1] = from.y; attr.array[2] = from.z;
-    attr.array[3] = to.x; attr.array[4] = to.y; attr.array[5] = to.z;
-    attr.needsUpdate = true;
-    t.line.visible = true;
-    t.line.material.opacity = 0.9;
-    t.life = 0.07;
+    const positions = tracer.line.geometry.attributes.position;
+    positions.setXYZ(0, from.x, from.y, from.z);
+    positions.setXYZ(1, to.x, to.y, to.z);
+    positions.needsUpdate = true;
+    tracer.life = 0.07;
+    tracer.line.visible = true;
+    tracer.line.material.opacity = 0.9;
+  }
+
+  function finitePoint(point) {
+    return Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.z);
   }
 
   function muzzle() {
@@ -148,117 +147,123 @@ export function createEffects(scene, camera) {
     flashLight.intensity = 14;
   }
 
+  const fireColor = new THREE.Color(0xffa040);
+  const debrisColor = new THREE.Color(0x555049);
   function explosion(pos, radius = 5) {
-    const b = booms[bNext];
+    const boom = booms[bNext];
     bNext = (bNext + 1) % booms.length;
-    b.mesh.position.copy(pos);
-    b.mesh.scale.setScalar(0.4);
-    b.mesh.visible = true;
-    b.light.position.copy(pos);
-    b.light.position.y += 1;
-    b.light.intensity = 90;
-    b.life = 0.55;
-    b.max = radius;
-    burstParticles(pos, 90, new THREE.Color(0xffa040), 9);
-    burstParticles(pos, 40, new THREE.Color(0x555049), 5);
+    boom.life = 0.55;
+    boom.max = radius;
+    boom.mesh.position.copy(pos);
+    boom.mesh.scale.setScalar(0.4);
+    boom.mesh.material.opacity = 0.55;
+    boom.mesh.visible = true;
+    boom.light.position.copy(pos);
+    boom.light.position.y += 1;
+    boom.light.intensity = 90;
+    burstParticles(pos, 90, fireColor, 9);
+    burstParticles(pos, 40, debrisColor, 5);
   }
 
   function smoke(x, y, z) {
-    const c = clouds[cNext];
+    const cloud = clouds[cNext];
     cNext = (cNext + 1) % MAX_CLOUDS;
-    c.x = x; c.y = Math.max(0.9, y); c.z = z;
-    c.life = 12;
-    c.max = 12;
-    c.group.visible = true;
-    for (let j = 0; j < c.puffs.length; j += 1) {
-      const puff = c.puffs[j];
-      const a = (j / c.puffs.length) * Math.PI * 2 + c.seed;
-      puff.position.set(Math.cos(a) * 1.1, 0.4 + (j % 3) * 0.7, Math.sin(a) * 1.1);
+    Object.assign(cloud, { x, y: Math.max(y, 0.9), z, life: 12, max: 12 });
+    cloud.group.position.set(x, cloud.y, z);
+    cloud.group.visible = true;
+    for (let i = 0; i < cloud.puffs.length; i++) {
+      const puff = cloud.puffs[i];
+      const phase = cloud.seed + (i / cloud.puffs.length) * (2 * Math.PI);
+      puff.position.set(1.1 * Math.cos(phase), 0.4 + 0.7 * (i % 3), 1.1 * Math.sin(phase));
       puff.scale.setScalar(1.4);
       puff.material.opacity = 0.55;
     }
   }
 
-  // Does segment a->b cross any live smoke cloud? (sphere test per puff.)
+  // Project each cloud centre onto the finite sight segment. This handles
+  // an observer inside smoke and zero-length segments without division by 0.
   function blockedBySmoke(a, b) {
-    for (const c of clouds) {
-      if (c.life <= 0) continue;
-      tmpA.set(c.x - a.x, c.y - a.y, c.z - a.z);
-      tmpB.set(b.x - a.x, b.y - a.y, b.z - a.z);
-      const lenSq = tmpB.lengthSq() || 1;
-      let t = tmpA.dot(tmpB) / lenSq;
-      t = Math.max(0, Math.min(1, t));
-      const dx = a.x + tmpB.x * t - c.x;
-      const dy = a.y + tmpB.y * t - c.y;
-      const dz = a.z + tmpB.z * t - c.z;
-      if (dx * dx + dy * dy + dz * dz < 2.6 * 2.6) return true;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const squaredLength = dx * dx + dy * dy + dz * dz;
+    for (const volume of clouds) {
+      if (volume.life <= 0) continue;
+      const cx = volume.x - a.x;
+      const cy = volume.y - a.y;
+      const cz = volume.z - a.z;
+      const dot = cx * dx + cy * dy + cz * dz;
+      const along = squaredLength > 0 ? Math.min(1, Math.max(0, dot / squaredLength)) : 0;
+      const ex = dx * along - cx;
+      const ey = dy * along - cy;
+      const ez = dz * along - cz;
+      if (ex * ex + ey * ey + ez * ez < SMOKE_RADIUS_SQUARED) return true;
     }
     return false;
   }
 
-  function step(dt) {
-    // particles
-    let dirty = false;
-    for (let i = 0; i < MAX_PARTICLES; i += 1) {
-      if (pLife[i] <= 0) continue;
-      dirty = true;
-      pLife[i] -= dt;
-      if (pLife[i] <= 0) {
-        pPos[i * 3 + 1] = -100;
+  function stepParticles(dt) {
+    let changed = false;
+    for (let slot = 0; slot < MAX_PARTICLES; slot++) {
+      if (pLife[slot] <= 0) continue;
+      changed = true;
+      const offset = slot * 3;
+      pLife[slot] -= dt;
+      if (pLife[slot] <= 0) {
+        pPos[offset + 1] = -100;
         continue;
       }
-      pVel[i * 3 + 1] -= 9 * dt;
-      pPos[i * 3] += pVel[i * 3] * dt;
-      pPos[i * 3 + 1] += pVel[i * 3 + 1] * dt;
-      pPos[i * 3 + 2] += pVel[i * 3 + 2] * dt;
-      if (pPos[i * 3 + 1] < 0.03) {
-        pPos[i * 3 + 1] = 0.03;
-        pVel[i * 3 + 1] *= -0.3;
+      pVel[offset + 1] -= dt * 9;
+      for (let axis = 0; axis < 3; axis++) {
+        pPos[offset + axis] += dt * pVel[offset + axis];
+      }
+      if (pPos[offset + 1] < 0.03) {
+        pPos[offset + 1] = 0.03;
+        pVel[offset + 1] *= -0.3;
       }
     }
-    if (dirty) pGeo.attributes.position.needsUpdate = true;
-    // tracers
-    for (const t of tracers) {
-      if (t.life <= 0) continue;
-      t.life -= dt;
-      t.line.material.opacity = Math.max(0, t.life / 0.07) * 0.9;
-      if (t.life <= 0) t.line.visible = false;
-    }
-    // muzzle
-    if (flashLife > 0) {
-      flashLife -= dt;
-      if (flashLife <= 0) {
-        flashMat.opacity = 0;
-        flashLight.intensity = 0;
+    if (changed) pGeo.attributes.position.needsUpdate = true;
+  }
+
+  function stepSmoke(dt) {
+    for (const cloud of clouds) {
+      if (cloud.life <= 0) continue;
+      cloud.life = Math.max(cloud.life - dt, 0);
+      const age = 1 - cloud.life / cloud.max;
+      const expansion = 1.4 + 1.6 * Math.min(age * 3, 1);
+      const opacity = 0.5 * Math.min(cloud.life / 3, 1);
+      for (let i = 0; i < cloud.puffs.length; i++) {
+        const puff = cloud.puffs[i];
+        puff.scale.setScalar(expansion * (0.8 + 0.25 * (i % 3)));
+        puff.material.opacity = opacity;
+        puff.position.y += dt * 0.15 * Math.sin(age * 6 + i);
       }
+      cloud.group.visible = cloud.life > 0;
     }
-    // explosions
-    for (const b of booms) {
-      if (b.life <= 0) continue;
-      b.life -= dt;
-      const k = 1 - Math.max(0, b.life) / 0.55;
-      b.mesh.scale.setScalar(0.4 + k * b.max);
-      b.mesh.material.opacity = Math.max(0, 0.55 - k * 0.55);
-      b.light.intensity = Math.max(0, 90 * (1 - k));
-      if (b.life <= 0) {
-        b.mesh.visible = false;
-        b.light.intensity = 0;
-      }
+  }
+
+  function step(dt) {
+    stepParticles(dt);
+    stepSmoke(dt);
+    for (const tracer of tracers) {
+      if (tracer.life <= 0) continue;
+      tracer.life = Math.max(0, tracer.life - dt);
+      tracer.line.material.opacity = tracer.life / 0.07 * 0.9;
+      tracer.line.visible = tracer.life > 0;
     }
-    // smoke
-    for (const c of clouds) {
-      if (c.life <= 0) continue;
-      c.life -= dt;
-      const age = 1 - c.life / c.max;
-      const grow = Math.min(1, age * 3);
-      const fade = c.life < 3 ? c.life / 3 : 1;
-      for (let j = 0; j < c.puffs.length; j += 1) {
-        const puff = c.puffs[j];
-        puff.scale.setScalar((1.4 + grow * 1.6) * (0.8 + (j % 3) * 0.25));
-        puff.material.opacity = 0.5 * fade;
-        puff.position.y += Math.sin(age * 6 + j) * dt * 0.15;
-      }
-      if (c.life <= 0) c.group.visible = false;
+    flashLife = Math.max(0, flashLife - dt);
+    if (flashLife === 0) {
+      flashMat.opacity = 0;
+      flashLight.intensity = 0;
+    }
+    for (const boom of booms) {
+      if (boom.life <= 0) continue;
+      boom.life = Math.max(0, boom.life - dt);
+      const fraction = boom.life / 0.55;
+      boom.mesh.scale.setScalar(boom.max * (1 - fraction) + 0.4);
+      boom.mesh.material.opacity = fraction * 0.55;
+      boom.light.intensity = fraction * 90;
+      boom.mesh.visible = boom.life > 0;
     }
   }
 
